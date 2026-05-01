@@ -2,68 +2,27 @@ const path = require('path');
 const fs   = require('fs');
 const initSqlJs = require('sql.js');
 
-// ✅ FIXED: path is relative to backend root (one level up from config/)
 const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/taskmanager.db');
-
 const dir = path.dirname(dbPath);
 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-class SqlJsDB {
-  constructor(sqlJs, buffer) {
-    this._db = new sqlJs.Database(buffer);
-    this._path = dbPath;
-  }
-
-  _save() {
-    const data = this._db.export();
-    fs.writeFileSync(this._path, Buffer.from(data));
-  }
-
-  exec(sql) {
-    this._db.run(sql);
-    this._save();
-    return this;
-  }
-
-  pragma(val) {
-    this._db.run(`PRAGMA ${val}`);
-    return this;
-  }
-
-  prepare(sql) {
-    const self = this;
-    return {
-      run(...params) {
-        self._db.run(sql, params);
-        self._save();
-        const res = self._db.exec('SELECT last_insert_rowid() AS id');
-        return { lastInsertRowid: res[0]?.values[0][0] ?? null };
-      },
-      get(...params) {
-        const res = self._db.exec(sql, params);
-        if (!res.length || !res[0].values.length) return undefined;
-        const { columns, values } = res[0];
-        return Object.fromEntries(columns.map((c, i) => [c, values[0][i]]));
-      },
-      all(...params) {
-        const res = self._db.exec(sql, params);
-        if (!res.length) return [];
-        const { columns, values } = res[0];
-        return values.map(row => Object.fromEntries(columns.map((c, i) => [c, row[i]])));
-      },
-    };
-  }
-}
 
 let _dbInstance = null;
 
 const getDb = async () => {
   if (_dbInstance) return _dbInstance;
+
   const SQL = await initSqlJs();
   const buffer = fs.existsSync(dbPath) ? fs.readFileSync(dbPath) : null;
-  const db = new SqlJsDB(SQL, buffer);
-  db.pragma('foreign_keys = ON');
-  db.exec(`
+  const sqlDb  = new SQL.Database(buffer);
+
+  const save = () => {
+    const data = sqlDb.export();
+    fs.writeFileSync(dbPath, Buffer.from(data));
+  };
+
+  // Run schema once
+  sqlDb.run(`PRAGMA foreign_keys = ON`);
+  sqlDb.run(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -94,12 +53,47 @@ const getDb = async () => {
       due_date TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
-    CREATE INDEX IF NOT EXISTS idx_tasks_project  ON tasks(project_id);
-    CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned_to);
+    CREATE INDEX IF NOT EXISTS idx_tasks_project   ON tasks(project_id);
+    CREATE INDEX IF NOT EXISTS idx_tasks_assigned  ON tasks(assigned_to);
     CREATE INDEX IF NOT EXISTS idx_members_project ON project_members(project_id);
     CREATE INDEX IF NOT EXISTS idx_members_user    ON project_members(user_id);
   `);
-  console.log('✅ Database ready at', dbPath);
+  save();
+
+  // Wrapper that mimics better-sqlite3 API
+  const db = {
+    prepare(sql) {
+      return {
+        run(...params) {
+          sqlDb.run(sql, params);
+          // ✅ FIXED: get lastInsertRowid from the SAME sqlDb instance immediately
+          const res = sqlDb.exec('SELECT last_insert_rowid() as id');
+          const lastInsertRowid = res[0]?.values[0][0] ?? null;
+          save();
+          return { lastInsertRowid };
+        },
+        get(...params) {
+          const res = sqlDb.exec(sql, params);
+          if (!res.length || !res[0].values.length) return undefined;
+          const { columns, values } = res[0];
+          return Object.fromEntries(columns.map((c, i) => [c, values[0][i]]));
+        },
+        all(...params) {
+          const res = sqlDb.exec(sql, params);
+          if (!res.length) return [];
+          const { columns, values } = res[0];
+          return values.map(row => Object.fromEntries(columns.map((c, i) => [c, row[i]])));
+        },
+      };
+    },
+    exec(sql) {
+      sqlDb.run(sql);
+      save();
+      return this;
+    },
+  };
+
+  console.log('✅ Database ready at ', dbPath);
   _dbInstance = db;
   return db;
 };
