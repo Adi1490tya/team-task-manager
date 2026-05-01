@@ -2,7 +2,8 @@ const path = require('path');
 const fs   = require('fs');
 const initSqlJs = require('sql.js');
 
-const dbPath = process.env.DB_PATH || path.join(__dirname, '../../data/taskmanager.db');
+// ✅ FIXED: path is relative to backend root (one level up from config/)
+const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/taskmanager.db');
 
 const dir = path.dirname(dbPath);
 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -80,7 +81,7 @@ const getDb = async () => {
     );
     CREATE TABLE IF NOT EXISTS project_members (
       project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       PRIMARY KEY (project_id, user_id)
     );
     CREATE TABLE IF NOT EXISTS tasks (
@@ -93,10 +94,10 @@ const getDb = async () => {
       due_date TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
-    CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+    CREATE INDEX IF NOT EXISTS idx_tasks_project  ON tasks(project_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned_to);
     CREATE INDEX IF NOT EXISTS idx_members_project ON project_members(project_id);
-    CREATE INDEX IF NOT EXISTS idx_members_user ON project_members(user_id);
+    CREATE INDEX IF NOT EXISTS idx_members_user    ON project_members(user_id);
   `);
   console.log('✅ Database ready at', dbPath);
   _dbInstance = db;
